@@ -1,0 +1,10 @@
+.venv/
+.idea/
+*.env
+knowledge/
+scripts/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
