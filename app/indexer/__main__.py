@@ -24,16 +24,19 @@ async def _run(root: str, verbose: bool) -> int:
     finally:
         await pool.close()
 
-    print(f"added:   {stats.added}")
-    print(f"skipped: {stats.skipped}")
-    print(f"chunks:  {stats.chunks}")
-    print(f"links:   {stats.links}")
+    print(f"added:         {stats.added}")
+    print(f"skipped:       {stats.skipped}")
+    print(f"chunks:        {stats.chunks}")
+    print(f"relationships: {stats.relationships}")
+    print(f"new_entities:  {stats.new_entities}")
+    print(f"auto_aliases:  {stats.auto_aliases}")
 
     if stats.dangling:
-        print(f"dangling: {len(stats.dangling)}")
+        print(f"dangling:      {len(stats.dangling)}")
         if verbose:
             for src, rel, target in stats.dangling:
-                print(f"  {src} --[{rel}]--> {target} (missing)")
+                print(f"  {src} --[{rel}]--> {target}")
+
     return 0
 
 

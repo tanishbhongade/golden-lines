@@ -22,8 +22,6 @@ def _normalize_speaker(speaker):
 
 
 class OKFLoader(BaseLoader):
-    """OKF/Markdown → Document. Frontmatter → metadata, body → page_content."""
-
     def __init__(self, root: str | Path):
         self.root = Path(root)
 
@@ -38,9 +36,8 @@ class OKFLoader(BaseLoader):
 
             metadata = dict(fm)
             metadata.update({
-                "page_path": slug_path,
+                "line_path": slug_path,
                 "title": fm.get("title", path.stem),
-                "type": fm.get("type", "unknown"),
                 "version": str(fm.get("version", "1.0")),
                 "hash": _content_hash(body, fm),
             })
