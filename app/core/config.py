@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     # LLM
     llm_model: str
 
+    jwt_secret: str
+    jwt_algorithm: str = "HS256"
+    jwt_expire_minutes: int = 10080        # 7 days
+    auth_password_hash: str
+
     @property
     def conninfo(self) -> str:
         return (

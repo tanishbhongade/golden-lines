@@ -25,9 +25,8 @@ def make_search_tools(pool):
         Use for conceptual questions: "what do I think about X?",
         "find anything about Y".
 
-        Returns {'results': [...]} where each row has line_path, chunk_index,
-        chunk_count, content, metadata, and score. When chunk_count > 1, the
-        row is a fragment — call get_page on line_path to read the full line."""
+        Returns candidates only. Before quoting or answering, call get_page on
+        the line_path to read the full text and verify the metadata."""
         results = await _search.semantic_search(query, pool, limit=limit)
         return _with_chunk_note(results)
 
