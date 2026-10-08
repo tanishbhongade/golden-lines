@@ -1,4 +1,3 @@
-```markdown
 # Golden Lines
 
 A personal knowledge system for capturing, connecting, and retrieving the
@@ -418,4 +417,3 @@ Build them when the corpus and usage tell you they're needed. Not before.
 ## License
 
 MIT
-```
