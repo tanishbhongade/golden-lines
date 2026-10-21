@@ -22,7 +22,7 @@ async def resolve_entity(
     """
     Resolve a user mention to candidate entities.
 
-    Ladder: exact key → exact alias → prefix → trigram on display_name/alias.
+    Ladder: exact key → prefix → trigram on display_name.
     Returns candidates, never picks a winner.
     """
     name = name.strip()
@@ -48,29 +48,15 @@ async def resolve_entity(
 
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
-            # 1. exact key
+            # 1. exact key (case-insensitive)
             await cur.execute(
-                "SELECT key, type, display_name FROM entities WHERE key = %s",
+                "SELECT key, type, display_name FROM entities WHERE lower(key) = %s",
                 (name,),
             )
             for row in await cur.fetchall():
                 _add(row, "exact", 1.0)
 
-            # 2. exact alias
-            await cur.execute(
-                """
-                SELECT e.key, e.type, e.display_name
-                FROM aliases a
-                         JOIN entities e ON e.key = a.entity_key
-                WHERE a.alias = %s
-                    LIMIT %s
-                """,
-                (lower, rung_limit),
-            )
-            for row in await cur.fetchall():
-                _add(row, "alias", 1.0)
-
-            # 3. prefix
+            # 2. prefix
             if slug:
                 await cur.execute(
                     """
@@ -85,19 +71,13 @@ async def resolve_entity(
                 for row in await cur.fetchall():
                     _add(row, "prefix", 0.8)
 
-            # 4. trigram on display_name and alias
+            # 3. trigram on display_name (case-insensitive)
             await cur.execute(
                 """
-                SELECT key, type, display_name, sim
-                FROM (
-                    SELECT key, type, display_name, similarity(display_name, %s) AS sim
-                    FROM entities
-                    UNION ALL
-                    SELECT e.key, e.type, e.display_name, similarity(a.alias, %s) AS sim
-                    FROM aliases a
-                    JOIN entities e ON e.key = a.entity_key
-                    ) t
-                WHERE sim >= %s
+                SELECT key, type, display_name, similarity(lower (display_name), %s) AS sim
+                FROM entities
+                WHERE similarity(lower (display_name)
+                    , %s) >= %s
                 ORDER BY sim DESC
                     LIMIT %s
                 """,
