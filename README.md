@@ -1,48 +1,42 @@
 # Golden Lines
 
-A personal knowledge system for capturing, connecting, and retrieving the
-sentences worth remembering.
+A personal knowledge system for capturing, connecting, and retrieving the sentences worth remembering.
 
-Golden lines are stored as plain Markdown files. Everything else — entities,
-relationships, embeddings, search indexes — is a rebuildable projection into
-Postgres. If you delete the database, your knowledge is intact.
-
----
+Golden lines are stored as plain Markdown files. Everything else — entities, relationships, embeddings, search indexes — is a rebuildable projection into Postgres. If you delete the database, your knowledge is intact.
 
 ## What it does
 
 - **Capture** a line from the CLI or over HTTP
 - **Index** it automatically into a searchable knowledge graph
-- **Query** in natural language through an LLM agent that uses tools to
-  resolve entities, traverse relationships, and rank by semantic similarity
+- **Query** in natural language through an LLM agent that uses tools to resolve entities, traverse relationships, and rank by semantic similarity
 - **Browse** entities and lines over HTTP
 
 The LLM never writes to your knowledge base. It reads. Only you author.
 
----
-
 ## How it works
-
 ```
-knowledge/golden-lines/*.md          ← canonical, you write these
+
+knowledge/golden-lines/\*.md ← canonical, you write these
 │
-▼  indexer (deterministic)
-golden_lines ─── entities ─── relationships
+▼
+indexer (deterministic)
 │
+├── golden_lines
+├── entities
+├── relationships
 └── chunks (pgvector)
 │
-▼  retrieval layer
-tools ──► LangGraph agent ──► answer
-```
+▼
+retrieval layer → tools → LangGraph agent → answer
+
+````
 
 Files are the source of truth. Postgres is a projection. Rebuild anytime:
 
 ```bash
-TRUNCATE chunks, relationships, aliases, entities, golden_lines CASCADE;
+TRUNCATE chunks, relationships, entities, golden_lines CASCADE;
 python -m app.indexer knowledge/
-```
-
----
+````
 
 ## Requirements
 
@@ -50,14 +44,13 @@ python -m app.indexer knowledge/
 - Docker + Docker Compose
 - AWS Bedrock access (for embeddings and LLM)
 
----
-
 ## Setup
 
 ### 1. Clone and install
 
 ```bash
-git clone <repo> goldenlines
+git clone
+  goldenlines
 cd goldenlines
 python -m venv .venv
 source .venv/bin/activate
@@ -66,8 +59,7 @@ pip install -r requirements.txt
 
 ### 2. Start Postgres
 
-The compose file lives in a separate services directory, e.g.
-`~/local-services/postgres/`. It provides Postgres 18 with pgvector.
+The compose file lives in a separate services directory, e.g. `~/local-services/postgres/`. It provides Postgres 18 with pgvector.
 
 ```bash
 cd ~/local-services/postgres
@@ -89,12 +81,12 @@ Create `.env` in the project root:
 PG_HOST=localhost
 PG_PORT=5432
 PG_USER=tanish
-PG_PASSWORD=<your-password>
+PG_PASSWORD=
 PG_DATABASE=goldenlines
 
 # AWS Bedrock
 AWS_REGION=ap-south-1
-AWS_BEARER_TOKEN_BEDROCK=<your-token>
+AWS_BEARER_TOKEN_BEDROCK=
 
 # Models
 EMBEDDING_MODEL=amazon.titan-embed-text-v2:0
@@ -102,10 +94,10 @@ EMBEDDING_DIMENSION=1024
 LLM_MODEL=deepseek.v3-v1:0
 
 # Auth (JWT)
-JWT_SECRET=<generate-with-token-hex-32>
+JWT_SECRET=
 JWT_ALGORITHM=HS256
 JWT_EXPIRE_MINUTES=10080
-AUTH_PASSWORD_HASH=<argon2-hash-of-your-password>
+AUTH_PASSWORD_HASH=
 ```
 
 Generate the auth secrets:
@@ -123,8 +115,6 @@ python -c "from pwdlib import PasswordHash; print(PasswordHash.recommended().has
 ```bash
 python -m app.indexer knowledge/
 ```
-
----
 
 ## Usage
 
@@ -195,27 +185,24 @@ curl -s -X POST localhost:8000/capture \
 Browse:
 
 ```bash
-curl -s localhost:8000/lines          -H "Authorization: Bearer $TOKEN" | jq
-curl -s localhost:8000/entities       -H "Authorization: Bearer $TOKEN" | jq
-curl -s localhost:8000/health | jq    # public
+curl -s localhost:8000/lines -H "Authorization: Bearer $TOKEN" | jq
+curl -s localhost:8000/entities -H "Authorization: Bearer $TOKEN" | jq
+curl -s localhost:8000/health | jq  # public
 ```
-
----
 
 ## The OKF format
 
 Every golden line is one Markdown file in `knowledge/golden-lines/`.
 
 ```markdown
----
 type: golden-line
 title: Systems over goals
 version: "1.0"
 speaker: "[[people/chaitanya-patil]]"
 topics:
-  - "[[topics/discipline]]"
-source: "[[sources/podcast-123]]"
----
+
+- "[[topics/discipline]]"
+  source: "[[sources/podcast-123]]"
 
 You do not rise to the level of your goals; you fall to the level of your systems.
 ```
@@ -230,22 +217,19 @@ You do not rise to the level of your goals; you fall to the level of your system
 
 ### Entity prefixes
 
-| Prefix | Type | Example |
-|---|---|---|
-| `people/` | person | `people/barney-stinson` |
-| `topics/` | topic | `topics/discipline` |
-| `sources/` | source | `sources/internet` |
+| Prefix     | Type   | Example                 |
+| ---------- | ------ | ----------------------- |
+| `people/`  | person | `people/barney-stinson` |
+| `topics/`  | topic  | `topics/discipline`     |
+| `sources/` | source | `sources/internet`      |
 
 ### Anonymous attribution
 
-Use `people/anonymous` like any other entity. It aggregates every
-unattributed line:
+Use `people/anonymous` like any other entity. It aggregates every unattributed line:
 
 ```markdown
 speaker: "[[people/anonymous]]"
 ```
-
----
 
 ## Project structure
 
@@ -288,67 +272,47 @@ goldenlines/
 └── .env
 ```
 
-Each layer imports only from layers above it. `retrieval/` never imports
-from `tools/` or `graph/`. `tools/` never imports from `graph/`.
-
----
+Each layer imports only from layers above it. `retrieval/` never imports from `tools/` or `graph/`. `tools/` never imports from `graph/`.
 
 ## Design principles
 
 1. **OKF/Markdown is canonical.** Human-readable, portable, git-friendly
 2. **Postgres is a projection.** Delete it, re-index, identical state
 3. **Only the author writes knowledge.** The LLM reads and reasons, never writes
-4. **Grounding is deterministic.** Entity resolution uses exact match,
-   aliases, and trigram similarity — not LLM guessing
-5. **The LLM selects tools; tools return facts.** The model routes, the
-   code computes
-
----
+4. **Grounding is deterministic.** Entity resolution uses exact match and trigram similarity — not LLM guessing
+5. **The LLM selects tools; tools return facts.** The model routes, the code computes
 
 ## Database schema
 
-| Table | Purpose | Written by |
-|---|---|---|
-| `golden_lines` | Projection of OKF files | Indexer |
-| `entities` | Distinct slugs from frontmatter | Indexer |
+| Table           | Purpose                            | Written by   |
+| --------------- | ---------------------------------- | ------------ |
+| `golden_lines`  | Projection of OKF files            | Indexer      |
+| `entities`      | Distinct slugs from frontmatter    | Indexer      |
 | `relationships` | Edges (`origin='file'` or `'llm'`) | Indexer, LLM |
-| `chunks` | Embeddable text + vectors | Indexer |
-| `aliases` | Entity resolution cache | Indexer, LLM |
+| `chunks`        | Embeddable text + vectors          | Indexer      |
 
-Five tables. Two extensions (`vector`, `pg_trgm`).
-
----
+Four tables. Two extensions (`vector`, `pg_trgm`).
 
 ## Entity resolution
 
 When the indexer encounters a slug it doesn't recognize, it tries:
 
 1. **Exact key** — `entities.key = slug`
-2. **Exact alias** — `aliases.alias = slug`
-3. **Trigram ≥ 0.85** — `similarity(key, slug)` → auto-alias
-4. **New entity** — insert and return
+2. **Trigram ≥ 0.85** — `similarity(key, slug)` → reuse the matched entity
+3. **New entity** — insert and return
 
-This means a typo like `people/chaitnya-patil` silently resolves to
-`people/chaitanya-patil`. The file stays as written. The derived layer
-is corrected.
-
----
+This means a typo like `people/chaitnya-patil` silently resolves to `people/chaitanya-patil`. The file stays as written. The derived layer is corrected.
 
 ## Models
 
-All model choices are environment variables. Swapping either is a config
-change, not a code change.
+All model choices are environment variables. Swapping either is a config change, not a code change.
 
-| Component | Default | Why |
-|---|---|---|
-| Embeddings | `amazon.titan-embed-text-v2:0` | In-region, cheap, 1024d |
-| LLM | `deepseek.v3-v1:0` | In-region, reliable tool calling |
+| Component  | Default                        | Why                              |
+| ---------- | ------------------------------ | -------------------------------- |
+| Embeddings | `amazon.titan-embed-text-v2:0` | In-region, cheap, 1024d          |
+| LLM        | `deepseek.v3-v1:0`             | In-region, reliable tool calling |
 
-**Note on Bedrock model IDs.** Nova models require an inference profile
-prefix (`apac.`, `us.`). DeepSeek V3.1 does not — use the bare ID
-`deepseek.v3-v1:0`.
-
----
+**Note on Bedrock model IDs.** Nova models require an inference profile prefix (`apac.`, `us.`). DeepSeek V3.1 does not — use the bare ID `deepseek.v3-v1:0`.
 
 ## Operational notes
 
@@ -363,7 +327,7 @@ Idempotent. Files whose content hash is unchanged are skipped.
 ### Reset the database
 
 ```sql
-TRUNCATE chunks, relationships, aliases, entities, golden_lines CASCADE;
+TRUNCATE chunks, relationships, entities, golden_lines CASCADE;
 ```
 
 Then re-index. Your files are untouched.
@@ -377,27 +341,18 @@ SELECT path, title FROM golden_lines;
 SELECT key, type, display_name FROM entities ORDER BY type, key;
 SELECT source, relationship, target FROM relationships;
 SELECT line_path, chunk_index, chunk_count FROM chunks;
-SELECT * FROM aliases;
 ```
-
----
 
 ## Adding from mobile (later)
 
-The HTTP API is reachable on your LAN. When you want to capture from a
-phone:
+The HTTP API is reachable on your LAN. When you want to capture from a phone:
 
-- **Tailscale** — install on laptop and phone, use the Tailscale IP
-  instead of the LAN IP. No port forwarding, encrypted, works anywhere
-- **HTTP Request Shortcuts** (Android) — home-screen widget firing
-  `POST /capture` with a bearer token
+- **Tailscale** — install on laptop and phone, use the Tailscale IP instead of the LAN IP. No port forwarding, encrypted, works anywhere
+- **HTTP Request Shortcuts** (Android) — home-screen widget firing `POST /capture` with a bearer token
 - **Tasker** (Android) — native HTTP action, share-sheet integration
-- **Telegram bot** — a small Python script that turns messages into
-  golden lines
+- **Telegram bot** — a small Python script that turns messages into golden lines
 
 The API needs no changes for any of these.
-
----
 
 ## What's not built
 
@@ -411,8 +366,6 @@ Deliberately out of scope for now:
 - MCP server
 
 Build them when the corpus and usage tell you they're needed. Not before.
-
----
 
 ## License
 
