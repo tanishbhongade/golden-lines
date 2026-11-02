@@ -51,7 +51,7 @@ async def resolve_entity(
             # 1. exact key (case-insensitive)
             await cur.execute(
                 "SELECT key, type, display_name FROM entities WHERE lower(key) = %s",
-                (name,),
+                (lower,),
             )
             for row in await cur.fetchall():
                 _add(row, "exact", 1.0)
