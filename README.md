@@ -1,371 +1,260 @@
 # Golden Lines
 
-A personal knowledge system for capturing, connecting, and retrieving the sentences worth remembering.
+Golden Lines is a personal knowledge system for capturing, connecting, and retrieving the sentences worth remembering.
 
-Golden lines are stored as plain Markdown files. Everything else — entities, relationships, embeddings, search indexes — is a rebuildable projection into Postgres. If you delete the database, your knowledge is intact.
+Knowledge is authored as plain Markdown files. PostgreSQL stores a rebuildable projection containing entities, relationships, search chunks, and embeddings. If the database is deleted, the source files remain intact.
 
-## What it does
+## Features
 
-- **Capture** a line from the CLI or over HTTP
-- **Index** it automatically into a searchable knowledge graph
-- **Query** in natural language through an LLM agent that uses tools to resolve entities, traverse relationships, and rank by semantic similarity
-- **Browse** entities and lines over HTTP
+- Capture golden lines from the CLI or HTTP API
+- Index Markdown files into PostgreSQL with `pgvector`
+- Resolve people, topics, and sources into a lightweight knowledge graph
+- Search and query the collection with an LLM agent
+- Browse lines and entities over HTTP
+- Keep the LLM read-only: only the author writes knowledge files
 
-The LLM never writes to your knowledge base. It reads. Only you author.
+## Architecture
 
-## How it works
+```text
+knowledge/**/*.md
+        │
+        ▼
+  deterministic indexer
+        │
+        ├── golden_lines
+        ├── entities
+        ├── relationships
+        └── chunks + embeddings
+        │
+        ▼
+ retrieval tools → LangGraph agent → answer
 ```
 
-knowledge/golden-lines/\*.md ← canonical, you write these
-│
-▼
-indexer (deterministic)
-│
-├── golden_lines
-├── entities
-├── relationships
-└── chunks (pgvector)
-│
-▼
-retrieval layer → tools → LangGraph agent → answer
-
-````
-
-Files are the source of truth. Postgres is a projection. Rebuild anytime:
+The Markdown corpus is the source of truth. PostgreSQL can be rebuilt at any time:
 
 ```bash
 TRUNCATE chunks, relationships, entities, golden_lines CASCADE;
 python -m app.indexer knowledge/
-````
+```
 
 ## Requirements
 
 - Python 3.12+
-- Docker + Docker Compose
-- AWS Bedrock access (for embeddings and LLM)
+- Docker and Docker Compose
+- PostgreSQL with the `vector` and `pg_trgm` extensions
+- AWS Bedrock access for embeddings and the LLM
 
 ## Setup
 
 ### 1. Clone and install
 
 ```bash
-git clone
-  goldenlines
-cd goldenlines
+git clone https://github.com/tanishbhongade/golden-lines.git
+cd golden-lines
+
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2. Start Postgres
+### 2. Configure PostgreSQL
 
-The compose file lives in a separate services directory, e.g. `~/local-services/postgres/`. It provides Postgres 18 with pgvector.
+Copy the example environment file and fill in the required values:
 
 ```bash
-cd ~/local-services/postgres
-docker compose up -d
+cp .env.example .env
 ```
 
-Apply the schema on first run:
+The repository includes a Compose example for a `pgvector` database:
 
 ```bash
-docker compose exec -T postgres psql -U tanish -d goldenlines < ./init-db.sql
+docker compose -f docker-compose.example.yml up -d
 ```
 
-### 3. Configure
-
-Create `.env` in the project root:
+The schema is mounted into the container and is applied automatically when the database volume is initialized. To apply it manually:
 
 ```bash
-# Postgres
+psql -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" -d "$PG_DATABASE" -f init-db.sql
+```
+
+### 3. Configure AWS Bedrock and authentication
+
+Set these values in `.env`:
+
+```dotenv
 PG_HOST=localhost
 PG_PORT=5432
-PG_USER=tanish
-PG_PASSWORD=
+PG_USER=postgres
+PG_PASSWORD=change-me
 PG_DATABASE=goldenlines
 
-# AWS Bedrock
 AWS_REGION=ap-south-1
 AWS_BEARER_TOKEN_BEDROCK=
-
-# Models
 EMBEDDING_MODEL=amazon.titan-embed-text-v2:0
 EMBEDDING_DIMENSION=1024
 LLM_MODEL=deepseek.v3-v1:0
 
-# Auth (JWT)
 JWT_SECRET=
 JWT_ALGORITHM=HS256
 JWT_EXPIRE_MINUTES=10080
 AUTH_PASSWORD_HASH=
 ```
 
-Generate the auth secrets:
+Generate a signing key and password hash:
 
 ```bash
-# JWT signing key
 python -c "import secrets; print(secrets.token_hex(32))"
-
-# Password hash
 python -c "from pwdlib import PasswordHash; print(PasswordHash.recommended().hash('YOUR-PASSWORD'))"
 ```
 
-### 4. Index your corpus
+### 4. Index the corpus
+
+The indexer accepts a path to a directory containing Markdown files:
 
 ```bash
 python -m app.indexer knowledge/
 ```
 
-## Usage
+Indexing is idempotent. Unchanged files are skipped.
 
-### Capture a golden line
+## Knowledge file format
 
-```bash
-# minimal
-python -m app.capture "You do not rise to the level of your goals; you fall to the level of your systems."
-
-# with speaker and topics
-python -m app.capture "Viva la vida - Long live life" \
-  -s anonymous \
-  -t life
-
-# write only, skip indexing (useful for batches)
-python -m app.capture "line one" -n
-python -m app.capture "line two" -n
-python -m app.indexer knowledge/
-```
-
-### Query
-
-```bash
-# one-shot
-python -m app.query "what did anonymous say about discipline?"
-
-# with tool-call trace
-python -m app.query -v "who said viva la vida?"
-
-# interactive
-python -m app.query
-```
-
-### HTTP API
-
-Start the server:
-
-```bash
-uvicorn app.api.main:app --host 0.0.0.0 --port 8000 --reload
-```
-
-Login and get a token:
-
-```bash
-TOKEN=$(curl -s -X POST localhost:8000/auth/login \
-  -H 'content-type: application/json' \
-  -d '{"password": "YOUR-PASSWORD"}' | jq -r .access_token)
-```
-
-Query:
-
-```bash
-curl -s -X POST localhost:8000/query \
-  -H "Authorization: Bearer $TOKEN" \
-  -H 'content-type: application/json' \
-  -d '{"question": "who said viva la vida?"}' | jq
-```
-
-Capture:
-
-```bash
-curl -s -X POST localhost:8000/capture \
-  -H "Authorization: Bearer $TOKEN" \
-  -H 'content-type: application/json' \
-  -d '{"body": "Viva la vida", "topics": ["life"]}' | jq
-```
-
-Browse:
-
-```bash
-curl -s localhost:8000/lines -H "Authorization: Bearer $TOKEN" | jq
-curl -s localhost:8000/entities -H "Authorization: Bearer $TOKEN" | jq
-curl -s localhost:8000/health | jq  # public
-```
-
-## The OKF format
-
-Every golden line is one Markdown file in `knowledge/golden-lines/`.
+Each golden line is one Markdown file under `knowledge/`. The filename becomes the line slug, frontmatter stores metadata, and the body contains the line itself.
 
 ```markdown
+---
 type: golden-line
 title: Systems over goals
 version: "1.0"
 speaker: "[[people/chaitanya-patil]]"
 topics:
-
-- "[[topics/discipline]]"
-  source: "[[sources/podcast-123]]"
+  - "[[topics/discipline]]"
+source: "[[sources/podcast-123]]"
+---
 
 You do not rise to the level of your goals; you fall to the level of your systems.
 ```
 
-**Rules:**
+### File rules
 
-- The **filename** is the slug. `systems-over-goals.md` → `golden-lines/systems-over-goals`
-- The **body** is the line itself. No headers, no links, no formatting
-- **Entities are referenced, never authored.** There is no `people/chaitanya-patil.md`. The entity exists because golden lines mention it
-- **One line per file**
-- **Only you write these files.** No tool, no LLM, no script
+- Use one golden line per Markdown file.
+- Keep the body to the line itself; do not add headings or formatting.
+- The filename is the slug: `systems-over-goals.md` becomes `systems-over-goals`.
+- Entity files are not required. Entities are created from frontmatter references.
+- Use `people/anonymous` for unattributed lines.
 
-### Entity prefixes
+Supported relationship fields are `speaker`, `topics`, and `source`. Common entity prefixes are:
 
-| Prefix     | Type   | Example                 |
-| ---------- | ------ | ----------------------- |
-| `people/`  | person | `people/barney-stinson` |
-| `topics/`  | topic  | `topics/discipline`     |
-| `sources/` | source | `sources/internet`      |
+| Prefix | Type | Example |
+| --- | --- | --- |
+| `people/` | Person | `people/barney-stinson` |
+| `topics/` | Topic | `topics/discipline` |
+| `sources/` | Source | `sources/internet` |
 
-### Anonymous attribution
+## CLI usage
 
-Use `people/anonymous` like any other entity. It aggregates every unattributed line:
-
-```markdown
-speaker: "[[people/anonymous]]"
-```
-
-## Project structure
-
-```
-goldenlines/
-├── knowledge/
-│   └── golden-lines/              # canonical, you write here
-├── app/
-│   ├── core/                      # config, db pool
-│   ├── indexer/                   # OKF → Postgres
-│   │   ├── loader.py              # parse files
-│   │   ├── links.py               # extract frontmatter references
-│   │   ├── resolver.py            # entity slug resolution ladder
-│   │   ├── chunker/               # body → chunks
-│   │   ├── embeddings/            # Bedrock embeddings
-│   │   ├── ingestion/             # atomic write to Postgres
-│   │   └── pipeline.py            # orchestrates all of the above
-│   ├── retrieval/                 # pure data access
-│   │   ├── resolve.py             # name → entity
-│   │   ├── pages.py               # get_page, list_entities
-│   │   ├── relationships.py       # lines_by, lines_about, get_related
-│   │   └── search.py              # semantic + hybrid search
-│   ├── tools/                     # LLM-callable wrappers
-│   ├── graph/                     # LangGraph orchestration
-│   │   ├── state.py
-│   │   ├── nodes/agent.py
-│   │   └── query_graph.py
-│   ├── capture/                   # write golden lines
-│   │   ├── service.py             # shared by CLI and API
-│   │   └── __main__.py            # CLI entry
-│   ├── query/
-│   │   └── __main__.py            # CLI entry
-│   └── api/
-│       ├── auth.py                # JWT
-│       └── main.py                # FastAPI routes
-├── scripts/                       # dev/test scripts
-├── docker-compose.yml             # may live in a services dir
-├── init-db.sql
-├── requirements.txt
-└── .env
-```
-
-Each layer imports only from layers above it. `retrieval/` never imports from `tools/` or `graph/`. `tools/` never imports from `graph/`.
-
-## Design principles
-
-1. **OKF/Markdown is canonical.** Human-readable, portable, git-friendly
-2. **Postgres is a projection.** Delete it, re-index, identical state
-3. **Only the author writes knowledge.** The LLM reads and reasons, never writes
-4. **Grounding is deterministic.** Entity resolution uses exact match and trigram similarity — not LLM guessing
-5. **The LLM selects tools; tools return facts.** The model routes, the code computes
-
-## Database schema
-
-| Table           | Purpose                            | Written by   |
-| --------------- | ---------------------------------- | ------------ |
-| `golden_lines`  | Projection of OKF files            | Indexer      |
-| `entities`      | Distinct slugs from frontmatter    | Indexer      |
-| `relationships` | Edges (`origin='file'` or `'llm'`) | Indexer, LLM |
-| `chunks`        | Embeddable text + vectors          | Indexer      |
-
-Four tables. Two extensions (`vector`, `pg_trgm`).
-
-## Entity resolution
-
-When the indexer encounters a slug it doesn't recognize, it tries:
-
-1. **Exact key** — `entities.key = slug`
-2. **Trigram ≥ 0.85** — `similarity(key, slug)` → reuse the matched entity
-3. **New entity** — insert and return
-
-This means a typo like `people/chaitnya-patil` silently resolves to `people/chaitanya-patil`. The file stays as written. The derived layer is corrected.
-
-## Models
-
-All model choices are environment variables. Swapping either is a config change, not a code change.
-
-| Component  | Default                        | Why                              |
-| ---------- | ------------------------------ | -------------------------------- |
-| Embeddings | `amazon.titan-embed-text-v2:0` | In-region, cheap, 1024d          |
-| LLM        | `deepseek.v3-v1:0`             | In-region, reliable tool calling |
-
-**Note on Bedrock model IDs.** Nova models require an inference profile prefix (`apac.`, `us.`). DeepSeek V3.1 does not — use the bare ID `deepseek.v3-v1:0`.
-
-## Operational notes
-
-### Re-index
+### Capture a line
 
 ```bash
+python -m app.capture \
+  "You do not rise to the level of your goals; you fall to the level of your systems." \
+  --speaker people/james-clear \
+  --topic discipline \
+  --source sources/atomic-habits
+```
+
+Options include `--title`, repeatable `--topic`, `--source`, and `--no-index`. Use `--no-index` to write several files and index them as a batch:
+
+```bash
+python -m app.capture "First line" --no-index
+python -m app.capture "Second line" --no-index
 python -m app.indexer knowledge/
 ```
 
-Idempotent. Files whose content hash is unchanged are skipped.
-
-### Reset the database
-
-```sql
-TRUNCATE chunks, relationships, entities, golden_lines CASCADE;
-```
-
-Then re-index. Your files are untouched.
-
-### Inspect
+### Query the collection
 
 ```bash
-docker compose exec postgres psql -U tanish -d goldenlines
+# One-shot query
+python -m app.query "What did James Clear say about discipline?"
 
-SELECT path, title FROM golden_lines;
-SELECT key, type, display_name FROM entities ORDER BY type, key;
-SELECT source, relationship, target FROM relationships;
-SELECT line_path, chunk_index, chunk_count FROM chunks;
+# Interactive mode
+python -m app.query
+
+# Include citations and the tool-call trace
+python -m app.query --verbose "Who said this line?"
 ```
 
-## Adding from mobile (later)
+## HTTP API
 
-The HTTP API is reachable on your LAN. When you want to capture from a phone:
+Start the API:
 
-- **Tailscale** — install on laptop and phone, use the Tailscale IP instead of the LAN IP. No port forwarding, encrypted, works anywhere
-- **HTTP Request Shortcuts** (Android) — home-screen widget firing `POST /capture` with a bearer token
-- **Tasker** (Android) — native HTTP action, share-sheet integration
-- **Telegram bot** — a small Python script that turns messages into golden lines
+```bash
+uvicorn app.api.main:app --host 0.0.0.0 --port 8000 --reload
+```
 
-The API needs no changes for any of these.
+Authenticate:
 
-## What's not built
+```bash
+TOKEN=$(curl -s -X POST http://localhost:8000/auth/login \
+  -H 'content-type: application/json' \
+  -d '{"password":"YOUR-PASSWORD"}' | jq -r .access_token)
+```
 
-Deliberately out of scope for now:
+Query and capture:
 
-- Multi-user support
-- Web UI
-- Golden-line-to-golden-line relationships (`supports`, `contradicts`)
-- Spaced repetition
-- Graph visualization
-- MCP server
+```bash
+curl -s -X POST http://localhost:8000/query \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"question":"What did James Clear say about discipline?"}' | jq
 
-Build them when the corpus and usage tell you they're needed. Not before.
+curl -s -X POST http://localhost:8000/capture \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"body":"Viva la vida","topics":["life"]}' | jq
+```
+
+Browse the collection:
+
+```bash
+curl -s http://localhost:8000/lines \
+  -H "Authorization: Bearer $TOKEN" | jq
+
+curl -s http://localhost:8000/entities \
+  -H "Authorization: Bearer $TOKEN" | jq
+
+curl -s http://localhost:8000/health | jq
+```
+
+`/health` is public. All other application endpoints require a bearer token.
+
+## Project structure
+
+```text
+golden-lines/
+├── knowledge/              # Canonical Markdown corpus
+├── app/
+│   ├── api/                # FastAPI routes and JWT authentication
+│   ├── capture/            # CLI/API write service
+│   ├── core/               # Settings and database stores
+│   ├── graph/              # LangGraph query orchestration
+│   ├── indexer/            # Markdown → PostgreSQL pipeline
+│   ├── retrieval/          # Data access and search
+│   ├── tools/              # LLM-callable retrieval tools
+│   └── query/              # Query CLI
+├── docker-compose.example.yml
+├── init-db.sql
+├── requirements.txt
+└── .env.example
+```
+
+## Design principles
+
+1. **Markdown is canonical.** The corpus is human-readable, portable, and Git-friendly.
+2. **PostgreSQL is a projection.** Re-indexing reconstructs the derived state.
+3. **The author writes knowledge.** The LLM can retrieve and reason, but does not author files.
+4. **Grounding is deterministic.** Entity resolution and retrieval are implemented in code.
+5. **Tools return facts.** The LLM selects retrieval tools; the tools perform the data access.
 
 ## License
 
