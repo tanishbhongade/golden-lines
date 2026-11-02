@@ -232,21 +232,105 @@ curl -s http://localhost:8000/health | jq
 
 ```text
 golden-lines/
-├── knowledge/              # Canonical Markdown corpus
+├── knowledge/
+│   └── golden-lines/              # Canonical Markdown corpus
+│       └── *.md                   # One authored golden line per file
 ├── app/
-│   ├── api/                # FastAPI routes and JWT authentication
-│   ├── capture/            # CLI/API write service
-│   ├── core/               # Settings and database stores
-│   ├── graph/              # LangGraph query orchestration
-│   ├── indexer/            # Markdown → PostgreSQL pipeline
-│   ├── retrieval/          # Data access and search
-│   ├── tools/              # LLM-callable retrieval tools
-│   └── query/              # Query CLI
-├── docker-compose.example.yml
-├── init-db.sql
-├── requirements.txt
-└── .env.example
+│   ├── api/
+│   │   ├── auth.py                # Login, password verification, JWT bearer auth
+│   │   └── main.py                # FastAPI app and HTTP endpoints
+│   ├── capture/
+│   │   ├── __main__.py            # `python -m app.capture`
+│   │   └── service.py             # Validate and write Markdown lines; trigger re-indexing
+│   ├── core/
+│   │   ├── config.py              # Environment-backed application settings
+│   │   └── stores/
+│   │       ├── relational.py      # PostgreSQL relational queries
+│   │       └── vector.py          # Vector/semantic search queries
+│   ├── graph/
+│   │   ├── nodes/
+│   │   │   └── agent.py           # LLM agent node and tool execution
+│   │   ├── query_graph.py         # Build and run the LangGraph query flow
+│   │   └── state.py               # Shared graph state and query result types
+│   ├── indexer/
+│   │   ├── __main__.py            # `python -m app.indexer`
+│   │   ├── chunker/
+│   │   │   └── default.py         # Split line text into embedding chunks
+│   │   ├── embeddings/
+│   │   │   └── default.py         # AWS Bedrock embedding provider
+│   │   ├── ingestion/
+│   │   │   └── default.py         # Atomic PostgreSQL projection writes
+│   │   ├── links.py               # Extract frontmatter relationships
+│   │   ├── loader.py               # Load and normalize Markdown/frontmatter
+│   │   ├── pipeline.py             # Coordinate loading, chunking, embedding, ingestion
+│   │   └── resolver.py             # Resolve and create referenced entities
+│   ├── query/
+│   │   └── __main__.py            # `python -m app.query` one-shot and interactive CLI
+│   ├── retrieval/
+│   │   ├── pages.py                # Fetch lines and entity pages
+│   │   ├── relationships.py        # Find lines by speaker/topic and related entities
+│   │   ├── resolve.py              # Resolve human names and entity keys
+│   │   └── search.py               # Semantic and hybrid search
+│   └── tools/
+│       ├── pages.py                # Agent tool wrappers for page retrieval
+│       ├── relationships.py        # Agent tool wrappers for graph traversal
+│       ├── resolve.py              # Agent tool wrapper for entity resolution
+│       └── search.py               # Agent tool wrapper for search
+├── docker-compose.example.yml      # Local pgvector/PostgreSQL service
+├── init-db.sql                     # Database extensions, tables, and indexes
+├── requirements.txt                # Python runtime dependencies
+├── .env.example                    # Configuration template
+├── .gitignore
+├── LICENSE
+└── README.md
 ```
+
+### Runtime flow
+
+```text
+Capture CLI / POST /capture
+              │
+              ▼
+   app.capture.service.write_line
+              │
+              ▼
+   knowledge/golden-lines/*.md
+              │
+              ▼
+      app.indexer.pipeline
+       ├── loader + links
+       ├── chunker + embeddings
+       ├── resolver
+       └── ingestion → PostgreSQL
+
+Query CLI / POST /query
+              │
+              ▼
+      app.graph.query_graph
+              │
+              ▼
+          agent node
+              │
+              ├── retrieval tools
+              │    ├── resolve
+              │    ├── search
+              │    ├── pages
+              │    └── relationships
+              │
+              ▼
+       grounded answer + citations
+```
+
+### Data ownership
+
+| Area | Responsibility | Source of truth |
+| --- | --- | --- |
+| `knowledge/golden-lines/` | Authored line text and metadata | Markdown files |
+| `app/indexer/` | Derived database projection | Markdown input |
+| `app/retrieval/` | Deterministic reads from the projection | PostgreSQL |
+| `app/tools/` | LLM-facing retrieval interface | Retrieval functions |
+| `app/graph/` | Query planning and answer generation | Tool results + LLM |
+| `app/api/` and CLI modules | User-facing entry points | Services and graph |
 
 ## Design principles
 
